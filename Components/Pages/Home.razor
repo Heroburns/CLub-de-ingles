@@ -1,0 +1,171 @@
+@page "/"
+@rendermode InteractiveServer
+@using Microsoft.EntityFrameworkCore
+@using ClubIngles.Data
+@using ClubIngles.Data.Models
+@inject IDbContextFactory<ApplicationDbContext> DbFactory
+
+<PageTitle>Club de Inglés</PageTitle>
+
+<h1>Club de Inglés — Universidad de Colima</h1>
+<p class="text-muted">Sistema de gestión de estudiantes, sesiones, asistencia y evaluaciones.</p>
+
+<AuthorizeView Roles="Coordinador">
+    <NotAuthorized>
+        @if (context.User.IsInRole("Estudiante"))
+        {
+            <div class="alert alert-success">
+                ¡Hola! Aquí puedes ver tu asistencia y tus evaluaciones.
+                <a class="btn btn-success btn-sm ms-2" href="mi-avance">Ver mi avance</a>
+            </div>
+        }
+        else
+        {
+            <div class="alert alert-info">
+                Inicia sesión para entrar al sistema.
+                <a class="btn btn-primary btn-sm ms-2" href="Account/Login">Iniciar sesión</a>
+            </div>
+        }
+    </NotAuthorized>
+    <Authorized>
+        @if (cargado)
+        {
+            @* ---------- Números generales ---------- *@
+            <div class="row g-3 mb-4">
+                <div class="col-md-3"><a class="text-decoration-none text-reset" href="estudiantes">
+                    <div class="card text-center"><div class="card-body">
+                        <div class="fs-2 fw-bold">@totalEstudiantes</div><div>Estudiantes</div>
+                    </div></div></a></div>
+                <div class="col-md-3"><a class="text-decoration-none text-reset" href="sesiones">
+                    <div class="card text-center"><div class="card-body">
+                        <div class="fs-2 fw-bold">@totalSesiones</div><div>Sesiones</div>
+                    </div></div></a></div>
+                <div class="col-md-3"><a class="text-decoration-none text-reset" href="historial">
+                    <div class="card text-center"><div class="card-body">
+                        <div class="fs-2 fw-bold">@asistenciaGeneral.ToString("0")%</div><div>Asistencia general</div>
+                    </div></div></a></div>
+                <div class="col-md-3"><a class="text-decoration-none text-reset" href="evaluaciones">
+                    <div class="card text-center"><div class="card-body">
+                        <div class="fs-2 fw-bold">@(promedioGeneral?.ToString("0.0") ?? "—")</div><div>Promedio general</div>
+                    </div></div></a></div>
+            </div>
+
+            <div class="row g-4">
+                @* ---------- Próxima / última sesión ---------- *@
+                <div class="col-md-6">
+                    <h4>@(proximaEsFutura ? "Próxima sesión" : "Última sesión")</h4>
+                    @if (proxima is null)
+                    {
+                        <p>No hay sesiones registradas.</p>
+                    }
+                    else
+                    {
+                        <div class="card"><div class="card-body">
+                            <h5>Semana @proxima.Semana — @proxima.Fecha.ToString("dd/MM/yyyy")</h5>
+                            <p class="mb-2">@proxima.Tema</p>
+                            <a class="btn btn-success btn-sm" href="asistencia/@proxima.IdSesion">Tomar asistencia</a>
+                        </div></div>
+                    }
+
+                    <h4 class="mt-4">Estudiantes por nivel</h4>
+                    <table class="table table-sm">
+                        @foreach (var n in porNivel)
+                        {
+                            <tr>
+                                <td style="width:60px"><span class="badge bg-info text-dark">@n.Nivel</span></td>
+                                <td>
+                                    <div class="progress" style="height: 20px">
+                                        <div class="progress-bar" style="width: @(totalEstudiantes == 0 ? 0 : 100 * n.Cantidad / totalEstudiantes)%">@n.Cantidad</div>
+                                    </div>
+                                </td>
+                            </tr>
+                        }
+                    </table>
+                </div>
+
+                @* ---------- Alertas ---------- *@
+                <div class="col-md-6">
+                    <h4>Necesitan atención</h4>
+                    <p class="text-muted small">Menos de 80% de asistencia o promedio menor a 70.</p>
+                    @if (enRiesgo.Count == 0)
+                    {
+                        <p class="text-success">✔ Todos van bien.</p>
+                    }
+                    else
+                    {
+                        <ul class="list-group">
+                            @foreach (var r in enRiesgo)
+                            {
+                                <li class="list-group-item d-flex justify-content-between align-items-center">
+                                    <a href="historial/@r.Id">@r.Nombre</a>
+                                    <span class="small text-danger">@r.Motivo</span>
+                                </li>
+                            }
+                        </ul>
+                    }
+                </div>
+            </div>
+        }
+        else
+        {
+            <p><em>Cargando...</em></p>
+        }
+    </Authorized>
+</AuthorizeView>
+
+@code {
+    private bool cargado;
+    private int totalEstudiantes, totalSesiones;
+    private double asistenciaGeneral;
+    private decimal? promedioGeneral;
+    private Sesion? proxima;
+    private bool proximaEsFutura;
+    private List<(string Nivel, int Cantidad)> porNivel = new();
+    private List<(int Id, string Nombre, string Motivo)> enRiesgo = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        using var db = DbFactory.CreateDbContext();
+
+        totalEstudiantes = await db.Estudiantes.CountAsync();
+        totalSesiones = await db.Sesiones.CountAsync();
+
+        int totalAsis = await db.Asistencias.CountAsync();
+        int asistieron = await db.Asistencias.CountAsync(a => a.Estado != EstadoAsistencia.Ausente);
+        asistenciaGeneral = totalAsis == 0 ? 0 : 100.0 * asistieron / totalAsis;
+
+        promedioGeneral = await db.Evaluaciones.AnyAsync()
+            ? await db.Evaluaciones.AverageAsync(v => v.Calificacion) : null;
+
+        var hoy = DateTime.Today;
+        proxima = await db.Sesiones.Where(s => s.Fecha >= hoy).OrderBy(s => s.Fecha).FirstOrDefaultAsync();
+        proximaEsFutura = proxima is not null;
+        proxima ??= await db.Sesiones.OrderByDescending(s => s.Fecha).FirstOrDefaultAsync();
+
+        var niveles = await db.Estudiantes.GroupBy(e => e.NivelCefrActual)
+            .Select(g => new { Nivel = g.Key, Cantidad = g.Count() }).ToListAsync();
+        porNivel = Textos.Niveles
+            .Select(n => (n, niveles.FirstOrDefault(x => x.Nivel == n)?.Cantidad ?? 0))
+            .Where(x => x.Item2 > 0).ToList();
+
+        var estudiantes = await db.Estudiantes.Include(e => e.Asistencias).Include(e => e.Evaluaciones)
+            .OrderBy(e => e.NombreCompleto).ToListAsync();
+        foreach (var e in estudiantes)
+        {
+            var motivos = new List<string>();
+            if (e.Asistencias.Count > 0)
+            {
+                double pct = 100.0 * e.Asistencias.Count(a => a.Estado != EstadoAsistencia.Ausente) / e.Asistencias.Count;
+                if (pct < 80) motivos.Add($"Asistencia {pct:0}%");
+            }
+            if (e.Evaluaciones.Count > 0)
+            {
+                decimal prom = e.Evaluaciones.Average(v => v.Calificacion);
+                if (prom < 70) motivos.Add($"Promedio {prom:0.0}");
+            }
+            if (motivos.Count > 0) enRiesgo.Add((e.IdEstudiante, e.NombreCompleto, string.Join(" · ", motivos)));
+        }
+
+        cargado = true;
+    }
+}

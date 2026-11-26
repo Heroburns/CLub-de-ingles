@@ -1,0 +1,139 @@
+@page "/asistencia"
+@page "/asistencia/{IdSesion:int}"
+@rendermode InteractiveServer
+@attribute [Authorize(Roles = Roles.Coordinador)]
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.EntityFrameworkCore
+@using ClubIngles.Data
+@using ClubIngles.Data.Models
+@inject IDbContextFactory<ApplicationDbContext> DbFactory
+@inject NavigationManager Nav
+
+<PageTitle>Asistencia</PageTitle>
+
+<h1>Asistencia</h1>
+
+@if (sesiones is null)
+{
+    <p><em>Cargando...</em></p>
+}
+else
+{
+    <div class="mb-3" style="max-width: 500px">
+        <label class="form-label">Sesión</label>
+        <select class="form-select" value="@IdSesion" @onchange="CambiarSesion">
+            <option value="0">-- Elige una sesión --</option>
+            @foreach (var s in sesiones)
+            {
+                <option value="@s.IdSesion">Semana @s.Semana — @s.Fecha.ToString("dd/MM/yyyy") — @s.Tema</option>
+            }
+        </select>
+    </div>
+
+    @if (filas is not null)
+    {
+        <div class="mb-3">
+            <span class="badge bg-success me-1">Presentes: @filas.Count(f => f.Estado == EstadoAsistencia.Presente)</span>
+            <span class="badge bg-warning text-dark me-1">Retardos: @filas.Count(f => f.Estado == EstadoAsistencia.Retardo)</span>
+            <span class="badge bg-danger">Ausentes: @filas.Count(f => f.Estado == EstadoAsistencia.Ausente)</span>
+        </div>
+
+        <table class="table table-striped align-middle">
+            <thead>
+                <tr><th>Matrícula</th><th>Estudiante</th><th>Estado</th></tr>
+            </thead>
+            <tbody>
+                @foreach (var f in filas)
+                {
+                    <tr>
+                        <td>@f.Matricula</td>
+                        <td>@f.Nombre</td>
+                        <td>
+                            <div class="btn-group btn-group-sm">
+                                @foreach (var estado in Enum.GetValues<EstadoAsistencia>())
+                                {
+                                    <button type="button"
+                                            class="btn @(f.Estado == estado ? "btn-dark" : "btn-outline-secondary")"
+                                            @onclick="() => { f.Estado = estado; guardado = false; }">
+                                        @estado
+                                    </button>
+                                }
+                            </div>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+
+        <button class="btn btn-primary" @onclick="Guardar">Guardar asistencia</button>
+        @if (guardado)
+        {
+            <span class="text-success ms-2">✔ Guardado</span>
+        }
+    }
+}
+
+@code {
+    [Parameter] public int IdSesion { get; set; }
+
+    private List<Sesion>? sesiones;
+    private List<Fila>? filas;
+    private bool guardado;
+
+    // Una fila por estudiante en la sesión elegida
+    private class Fila
+    {
+        public int IdEstudiante { get; set; }
+        public string Matricula { get; set; } = "";
+        public string Nombre { get; set; } = "";
+        public EstadoAsistencia Estado { get; set; } = EstadoAsistencia.Presente;
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        using var db = DbFactory.CreateDbContext();
+        sesiones ??= await db.Sesiones.OrderBy(s => s.Fecha).ToListAsync();
+        await CargarFilas();
+    }
+
+    private void CambiarSesion(ChangeEventArgs e)
+    {
+        var id = int.TryParse(e.Value?.ToString(), out var v) ? v : 0;
+        Nav.NavigateTo(id == 0 ? "asistencia" : $"asistencia/{id}");
+    }
+
+    private async Task CargarFilas()
+    {
+        guardado = false;
+        if (IdSesion == 0) { filas = null; return; }
+
+        using var db = DbFactory.CreateDbContext();
+        var registros = await db.Asistencias.Where(a => a.IdSesion == IdSesion)
+            .ToDictionaryAsync(a => a.IdEstudiante, a => a.Estado);
+
+        filas = await db.Estudiantes.OrderBy(e => e.NombreCompleto)
+            .Select(e => new Fila { IdEstudiante = e.IdEstudiante, Matricula = e.Matricula, Nombre = e.NombreCompleto })
+            .ToListAsync();
+
+        foreach (var f in filas)
+            if (registros.TryGetValue(f.IdEstudiante, out var estado)) f.Estado = estado;
+    }
+
+    private async Task Guardar()
+    {
+        if (filas is null) return;
+        using var db = DbFactory.CreateDbContext();
+        var existentes = await db.Asistencias.Where(a => a.IdSesion == IdSesion).ToListAsync();
+
+        foreach (var f in filas)
+        {
+            var reg = existentes.FirstOrDefault(a => a.IdEstudiante == f.IdEstudiante);
+            if (reg is null)
+                db.Asistencias.Add(new Asistencia { IdEstudiante = f.IdEstudiante, IdSesion = IdSesion, Estado = f.Estado });
+            else
+                reg.Estado = f.Estado;
+        }
+        await db.SaveChangesAsync();
+        guardado = true;
+    }
+}

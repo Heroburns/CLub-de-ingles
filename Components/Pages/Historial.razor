@@ -1,0 +1,78 @@
+@page "/historial"
+@page "/historial/{IdEstudiante:int}"
+@rendermode InteractiveServer
+@attribute [Authorize(Roles = Roles.Coordinador)]
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.EntityFrameworkCore
+@using ClubIngles.Data
+@using ClubIngles.Data.Models
+@inject IDbContextFactory<ApplicationDbContext> DbFactory
+
+<PageTitle>Historial</PageTitle>
+
+@if (IdEstudiante == 0)
+{
+    @* ---------- Resumen de todos ---------- *@
+    <h1>Historial de avance</h1>
+    <p class="text-muted">En rojo: menos de 80% de asistencia o promedio menor a 70.</p>
+
+    @if (resumen is null)
+    {
+        <p><em>Cargando...</em></p>
+    }
+    else
+    {
+        <table class="table table-striped align-middle">
+            <thead>
+                <tr><th>Estudiante</th><th>Nivel</th><th>Asistencia</th><th>Promedio</th><th></th></tr>
+            </thead>
+            <tbody>
+                @foreach (var r in resumen)
+                {
+                    <tr>
+                        <td>@r.Nombre</td>
+                        <td><span class="badge bg-info text-dark">@r.Nivel</span></td>
+                        <td class="@(r.PorcentajeAsistencia < 80 ? "text-danger fw-bold" : "")">@r.PorcentajeAsistencia.ToString("0")%</td>
+                        <td class="@(r.Promedio < 70 ? "text-danger fw-bold" : "")">@(r.Promedio?.ToString("0.0") ?? "—")</td>
+                        <td class="text-end"><a class="btn btn-sm btn-outline-primary" href="historial/@r.Id">Ver historial</a></td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+}
+else
+{
+    <a href="historial">← Todos los estudiantes</a>
+    <DetalleEstudiante IdEstudiante="IdEstudiante" />
+}
+
+@code {
+    [Parameter] public int IdEstudiante { get; set; }
+
+    private List<Resumen>? resumen;
+
+    private record Resumen(int Id, string Nombre, string Nivel, double PorcentajeAsistencia, decimal? Promedio);
+
+    protected override async Task OnParametersSetAsync()
+    {
+        using var db = DbFactory.CreateDbContext();
+
+        if (IdEstudiante == 0)
+        {
+            var lista = await db.Estudiantes
+                .Include(e => e.Asistencias).Include(e => e.Evaluaciones)
+                .OrderBy(e => e.NombreCompleto).ToListAsync();
+            resumen = lista.Select(e => new Resumen(
+                e.IdEstudiante, e.NombreCompleto, e.NivelCefrActual,
+                Porcentaje(e.Asistencias),
+                e.Evaluaciones.Count == 0 ? null : e.Evaluaciones.Average(v => v.Calificacion)
+            )).ToList();
+        }
+    }
+
+    // Asistencia % = (presentes + retardos) / sesiones registradas
+    private static double Porcentaje(List<Asistencia> asistencias) =>
+        asistencias.Count == 0 ? 0
+        : 100.0 * asistencias.Count(a => a.Estado != EstadoAsistencia.Ausente) / asistencias.Count;
+}

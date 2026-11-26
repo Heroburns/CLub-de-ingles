@@ -1,0 +1,42 @@
+@page "/mi-avance"
+@rendermode InteractiveServer
+@attribute [Authorize(Roles = Roles.Estudiante)]
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.EntityFrameworkCore
+@using ClubIngles.Data
+@inject IDbContextFactory<ApplicationDbContext> DbFactory
+@inject AuthenticationStateProvider AuthState
+
+<PageTitle>Mi avance</PageTitle>
+
+@if (buscando)
+{
+    <p><em>Cargando...</em></p>
+}
+else if (idEstudiante == 0)
+{
+    <div class="alert alert-warning">Tu cuenta no está vinculada a ningún estudiante. Habla con el coordinador del club.</div>
+}
+else
+{
+    @* Solo puede ver SU propio historial: el id sale de su cuenta, no de la URL *@
+    <DetalleEstudiante IdEstudiante="idEstudiante" />
+}
+
+@code {
+    private int idEstudiante;
+    private bool buscando = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var user = (await AuthState.GetAuthenticationStateAsync()).User;
+        var correo = user.Identity?.Name;   // la cuenta del estudiante usa su correo del club
+
+        using var db = DbFactory.CreateDbContext();
+        idEstudiante = await db.Estudiantes
+            .Where(e => e.Correo == correo)
+            .Select(e => e.IdEstudiante)
+            .FirstOrDefaultAsync();
+        buscando = false;
+    }
+}

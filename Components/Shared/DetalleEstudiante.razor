@@ -1,0 +1,95 @@
+@* Historial completo de un estudiante: lo usan el coordinador (Historial) y el estudiante (Mi avance) *@
+@using Microsoft.EntityFrameworkCore
+@using ClubIngles.Data
+@using ClubIngles.Data.Models
+@inject IDbContextFactory<ApplicationDbContext> DbFactory
+
+@if (cargando)
+{
+    <p><em>Cargando...</em></p>
+}
+else if (estudiante is null)
+{
+    <div class="alert alert-warning">No se encontró el estudiante.</div>
+}
+else
+{
+    <h1 class="mt-2">@estudiante.NombreCompleto</h1>
+    <p class="text-muted">@estudiante.Matricula · @estudiante.Correo · Nivel actual: <b>@estudiante.NivelCefrActual</b></p>
+
+    <div class="row g-3 mb-4">
+        <div class="col-md-3"><div class="card text-center"><div class="card-body">
+            <div class="fs-2 fw-bold @(porcentaje < 80 ? "text-danger" : "text-success")">@porcentaje.ToString("0")%</div>
+            <div>Asistencia</div></div></div></div>
+        <div class="col-md-3"><div class="card text-center"><div class="card-body">
+            <div class="fs-2 fw-bold">@Cuenta(EstadoAsistencia.Presente)</div><div>Presente</div></div></div></div>
+        <div class="col-md-3"><div class="card text-center"><div class="card-body">
+            <div class="fs-2 fw-bold">@Cuenta(EstadoAsistencia.Retardo)</div><div>Retardos</div></div></div></div>
+        <div class="col-md-3"><div class="card text-center"><div class="card-body">
+            <div class="fs-2 fw-bold">@Cuenta(EstadoAsistencia.Ausente)</div><div>Faltas</div></div></div></div>
+    </div>
+
+    <h4>Evaluaciones</h4>
+    @if (estudiante.Evaluaciones.Count == 0)
+    {
+        <p>Sin evaluaciones.</p>
+    }
+    else
+    {
+        <table class="table table-sm align-middle">
+            <thead><tr><th>Tipo</th><th>Fecha</th><th>Calificación</th><th>Nivel asignado</th></tr></thead>
+            <tbody>
+                @foreach (var v in estudiante.Evaluaciones.OrderBy(v => v.Fecha))
+                {
+                    <tr>
+                        <td>@Textos.Tipo(v.TipoEvaluacion)</td>
+                        <td>@v.Fecha.ToString("dd/MM/yyyy")</td>
+                        <td class="@(v.Calificacion < 70 ? "text-danger fw-bold" : "")">@v.Calificacion.ToString("0.#")</td>
+                        <td><span class="badge bg-info text-dark">@v.NivelCefrAsignado</span></td>
+                    </tr>
+                }
+                <tr class="fw-bold"><td>Promedio</td><td></td><td>@estudiante.Evaluaciones.Average(v => v.Calificacion).ToString("0.0")</td><td></td></tr>
+            </tbody>
+        </table>
+    }
+
+    <h4 class="mt-4">Asistencia por sesión</h4>
+    <table class="table table-sm align-middle">
+        <thead><tr><th>Semana</th><th>Fecha</th><th>Tema</th><th>Estado</th></tr></thead>
+        <tbody>
+            @foreach (var a in estudiante.Asistencias.OrderBy(a => a.Sesion!.Fecha))
+            {
+                <tr>
+                    <td>@a.Sesion!.Semana</td>
+                    <td>@a.Sesion.Fecha.ToString("dd/MM/yyyy")</td>
+                    <td>@a.Sesion.Tema</td>
+                    <td><span class="badge @Textos.ColorEstado(a.Estado)">@a.Estado</span></td>
+                </tr>
+            }
+        </tbody>
+    </table>
+}
+
+@code {
+    [Parameter] public int IdEstudiante { get; set; }
+
+    private Estudiante? estudiante;
+    private double porcentaje;
+    private bool cargando = true;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        cargando = true;
+        using var db = DbFactory.CreateDbContext();
+        estudiante = await db.Estudiantes
+            .Include(e => e.Asistencias).ThenInclude(a => a.Sesion)
+            .Include(e => e.Evaluaciones)
+            .FirstOrDefaultAsync(e => e.IdEstudiante == IdEstudiante);
+
+        porcentaje = estudiante is null || estudiante.Asistencias.Count == 0 ? 0
+            : 100.0 * estudiante.Asistencias.Count(a => a.Estado != EstadoAsistencia.Ausente) / estudiante.Asistencias.Count;
+        cargando = false;
+    }
+
+    private int Cuenta(EstadoAsistencia e) => estudiante?.Asistencias.Count(a => a.Estado == e) ?? 0;
+}

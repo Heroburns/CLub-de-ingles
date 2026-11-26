@@ -1,0 +1,239 @@
+@page "/estudiantes"
+@rendermode InteractiveServer
+@attribute [Authorize(Roles = Roles.Coordinador)]
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.EntityFrameworkCore
+@using ClubIngles.Data
+@using ClubIngles.Data.Models
+@using Microsoft.AspNetCore.Identity
+@using System.Security.Cryptography
+@inject IDbContextFactory<ApplicationDbContext> DbFactory
+@inject UserManager<ApplicationUser> UserManager
+
+<PageTitle>Estudiantes</PageTitle>
+
+<h1>Estudiantes</h1>
+
+@* ---------- Formulario: agregar / editar ---------- *@
+<div class="card mb-4">
+    <div class="card-body">
+        <h5 class="card-title">@(form.IdEstudiante == 0 ? "Nuevo estudiante" : "Editar estudiante")</h5>
+
+        <EditForm Model="form" OnValidSubmit="Guardar" FormName="estudiante">
+            <DataAnnotationsValidator />
+            <div class="row g-3">
+                <div class="col-md-3">
+                    <label class="form-label">Matrícula</label>
+                    <InputText class="form-control" @bind-Value="form.Matricula" />
+                    <ValidationMessage For="() => form.Matricula" />
+                </div>
+                <div class="col-md-5">
+                    <label class="form-label">Nombre completo</label>
+                    <InputText class="form-control" @bind-Value="form.NombreCompleto" />
+                    <ValidationMessage For="() => form.NombreCompleto" />
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label">Correo</label>
+                    <InputText class="form-control" @bind-Value="form.Correo" />
+                    <ValidationMessage For="() => form.Correo" />
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">Nivel CEFR</label>
+                    <InputSelect class="form-select" @bind-Value="form.NivelCefrActual">
+                        @foreach (var nivel in niveles)
+                        {
+                            <option value="@nivel">@nivel</option>
+                        }
+                    </InputSelect>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">Fecha de inscripción</label>
+                    <InputDate class="form-control" @bind-Value="form.FechaInscripcion" />
+                </div>
+            </div>
+
+            @if (!string.IsNullOrEmpty(error))
+            {
+                <div class="alert alert-danger mt-3">@error</div>
+            }
+
+            <div class="mt-3">
+                <button type="submit" class="btn btn-primary">Guardar</button>
+                @if (form.IdEstudiante != 0)
+                {
+                    <button type="button" class="btn btn-secondary ms-2" @onclick="Limpiar">Cancelar</button>
+                }
+            </div>
+        </EditForm>
+    </div>
+</div>
+
+@if (!string.IsNullOrEmpty(mensajeAcceso))
+{
+    <div class="alert alert-success alert-dismissible">
+        @((MarkupString)mensajeAcceso)
+        <button type="button" class="btn-close" @onclick="() => mensajeAcceso = null"></button>
+    </div>
+}
+
+@* ---------- Lista ---------- *@
+@if (estudiantes is null)
+{
+    <p><em>Cargando...</em></p>
+}
+else if (estudiantes.Count == 0)
+{
+    <p>Todavía no hay estudiantes registrados.</p>
+}
+else
+{
+    <table class="table table-striped align-middle">
+        <thead>
+            <tr>
+                <th>Matrícula</th>
+                <th>Nombre</th>
+                <th>Correo</th>
+                <th>Nivel</th>
+                <th>Inscripción</th>
+                <th>Cuenta</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var e in estudiantes)
+            {
+                <tr>
+                    <td>@e.Matricula</td>
+                    <td>@e.NombreCompleto</td>
+                    <td>@e.Correo</td>
+                    <td><span class="badge bg-info text-dark">@e.NivelCefrActual</span></td>
+                    <td>@e.FechaInscripcion.ToString("dd/MM/yyyy")</td>
+                    <td>
+                        @if (conAcceso.Contains(e.Correo.ToUpperInvariant()))
+                        {
+                            <span class="badge bg-success">Con acceso</span>
+                        }
+                        else
+                        {
+                            <button class="btn btn-sm btn-outline-secondary" @onclick="() => CrearAcceso(e)">Crear acceso</button>
+                        }
+                    </td>
+                    <td class="text-end">
+                        <a class="btn btn-sm btn-outline-success" href="historial/@e.IdEstudiante">Historial</a>
+                        <button class="btn btn-sm btn-outline-primary ms-1" @onclick="() => Editar(e)">Editar</button>
+                        @if (confirmarBorrar == e.IdEstudiante)
+                        {
+                            <button class="btn btn-sm btn-danger ms-1" @onclick="() => Borrar(e.IdEstudiante)">¿Seguro? Borrar</button>
+                            <button class="btn btn-sm btn-secondary ms-1" @onclick="() => confirmarBorrar = 0">No</button>
+                        }
+                        else
+                        {
+                            <button class="btn btn-sm btn-outline-danger ms-1" @onclick="() => confirmarBorrar = e.IdEstudiante">Borrar</button>
+                        }
+                    </td>
+                </tr>
+            }
+        </tbody>
+    </table>
+}
+
+@code {
+    private List<Estudiante>? estudiantes;
+    private Estudiante form = new();
+    private string? error;
+    private string? mensajeAcceso;
+    private HashSet<string> conAcceso = new();   // correos que ya tienen cuenta
+    private int confirmarBorrar = 0;
+    private readonly string[] niveles = { "A1", "A2", "B1", "B2", "C1", "C2" };
+
+    protected override async Task OnInitializedAsync() => await Cargar();
+
+    private async Task Cargar()
+    {
+        using var db = DbFactory.CreateDbContext();
+        estudiantes = await db.Estudiantes.OrderBy(e => e.NombreCompleto).ToListAsync();
+        conAcceso = (await db.Users.Select(u => u.NormalizedEmail).ToListAsync())
+            .Where(c => c != null).Select(c => c!).ToHashSet();
+    }
+
+    // Crea la cuenta del estudiante (rol Estudiante) con una contraseña temporal
+    private async Task CrearAcceso(Estudiante e)
+    {
+        string temporal = $"Ci{RandomNumberGenerator.GetInt32(100000, 999999)}!";
+        var user = new ApplicationUser { UserName = e.Correo, Email = e.Correo, EmailConfirmed = true };
+        var result = await UserManager.CreateAsync(user, temporal);
+        if (!result.Succeeded)
+        {
+            error = string.Join(" ", result.Errors.Select(x => x.Description));
+            return;
+        }
+        await UserManager.AddToRoleAsync(user, Roles.Estudiante);
+        mensajeAcceso = $"Cuenta creada para <b>{System.Net.WebUtility.HtmlEncode(e.NombreCompleto)}</b>. " +
+                        $"Usuario: <b>{System.Net.WebUtility.HtmlEncode(e.Correo)}</b> · Contraseña temporal: <b>{temporal}</b> " +
+                        "(anótala: no se vuelve a mostrar; el estudiante puede cambiarla al entrar).";
+        await Cargar();
+    }
+
+    private async Task Guardar()
+    {
+        error = null;
+        using var db = DbFactory.CreateDbContext();
+
+        // La matrícula no se puede repetir
+        bool repetida = await db.Estudiantes.AnyAsync(e =>
+            e.Matricula == form.Matricula && e.IdEstudiante != form.IdEstudiante);
+        if (repetida)
+        {
+            error = "Ya existe un estudiante con esa matrícula.";
+            return;
+        }
+
+        if (form.IdEstudiante == 0)
+            db.Estudiantes.Add(form);      // INSERT
+        else
+            db.Estudiantes.Update(form);   // UPDATE
+
+        await db.SaveChangesAsync();
+        Limpiar();
+        await Cargar();
+    }
+
+    private void Editar(Estudiante e)
+    {
+        error = null;
+        // Copia, para no cambiar la tabla hasta que se presione Guardar
+        form = new Estudiante
+        {
+            IdEstudiante = e.IdEstudiante,
+            Matricula = e.Matricula,
+            NombreCompleto = e.NombreCompleto,
+            Correo = e.Correo,
+            NivelCefrActual = e.NivelCefrActual,
+            FechaInscripcion = e.FechaInscripcion
+        };
+    }
+
+    private void Limpiar()
+    {
+        form = new Estudiante();
+        error = null;
+    }
+
+    private async Task Borrar(int id)
+    {
+        using var db = DbFactory.CreateDbContext();
+        var e = await db.Estudiantes.FindAsync(id);
+        if (e is not null)
+        {
+            db.Estudiantes.Remove(e);      // DELETE (también borra su asistencia y evaluaciones)
+            await db.SaveChangesAsync();
+
+            var cuenta = await UserManager.FindByEmailAsync(e.Correo);
+            if (cuenta is not null && await UserManager.IsInRoleAsync(cuenta, Roles.Estudiante))
+                await UserManager.DeleteAsync(cuenta);
+        }
+        confirmarBorrar = 0;
+        if (form.IdEstudiante == id) Limpiar();
+        await Cargar();
+    }
+}

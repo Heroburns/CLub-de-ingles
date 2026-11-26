@@ -1,0 +1,187 @@
+@page "/evaluaciones"
+@rendermode InteractiveServer
+@attribute [Authorize(Roles = Roles.Coordinador)]
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.EntityFrameworkCore
+@using ClubIngles.Data
+@using ClubIngles.Data.Models
+@inject IDbContextFactory<ApplicationDbContext> DbFactory
+
+<PageTitle>Evaluaciones</PageTitle>
+
+<h1>Evaluaciones</h1>
+
+<div class="card mb-4">
+    <div class="card-body">
+        <h5 class="card-title">@(form.IdEvaluacion == 0 ? "Nueva evaluación" : "Editar evaluación")</h5>
+        <EditForm Model="form" OnValidSubmit="Guardar" FormName="evaluacion">
+            <DataAnnotationsValidator />
+            <div class="row g-3">
+                <div class="col-md-4">
+                    <label class="form-label">Estudiante</label>
+                    <InputSelect class="form-select" @bind-Value="form.IdEstudiante">
+                        <option value="0">-- Elige --</option>
+                        @foreach (var e in estudiantes)
+                        {
+                            <option value="@e.IdEstudiante">@e.NombreCompleto</option>
+                        }
+                    </InputSelect>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">Tipo</label>
+                    <InputSelect class="form-select" @bind-Value="form.TipoEvaluacion">
+                        @foreach (var t in Enum.GetValues<TipoEvaluacion>())
+                        {
+                            <option value="@t">@Textos.Tipo(t)</option>
+                        }
+                    </InputSelect>
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label">Fecha</label>
+                    <InputDate class="form-control" @bind-Value="form.Fecha" />
+                </div>
+                <div class="col-md-1">
+                    <label class="form-label">Calif.</label>
+                    <InputNumber class="form-control" @bind-Value="form.Calificacion" />
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label">Nivel CEFR</label>
+                    <InputSelect class="form-select" @bind-Value="form.NivelCefrAsignado">
+                        @foreach (var n in Textos.Niveles)
+                        {
+                            <option value="@n">@n</option>
+                        }
+                    </InputSelect>
+                </div>
+            </div>
+            <ValidationMessage For="() => form.Calificacion" />
+            @if (!string.IsNullOrEmpty(error))
+            {
+                <div class="alert alert-danger mt-3">@error</div>
+            }
+            <div class="mt-3">
+                <button type="submit" class="btn btn-primary">Guardar</button>
+                @if (form.IdEvaluacion != 0)
+                {
+                    <button type="button" class="btn btn-secondary ms-2" @onclick="Limpiar">Cancelar</button>
+                }
+            </div>
+        </EditForm>
+    </div>
+</div>
+
+<div class="mb-3" style="max-width: 400px">
+    <label class="form-label">Filtrar por estudiante</label>
+    <select class="form-select" @onchange="Filtrar">
+        <option value="0">Todos</option>
+        @foreach (var e in estudiantes)
+        {
+            <option value="@e.IdEstudiante">@e.NombreCompleto</option>
+        }
+    </select>
+</div>
+
+@if (evaluaciones is null)
+{
+    <p><em>Cargando...</em></p>
+}
+else
+{
+    <table class="table table-striped align-middle">
+        <thead>
+            <tr><th>Estudiante</th><th>Tipo</th><th>Fecha</th><th>Calificación</th><th>Nivel</th><th></th></tr>
+        </thead>
+        <tbody>
+            @foreach (var v in evaluaciones.Where(v => filtro == 0 || v.IdEstudiante == filtro))
+            {
+                <tr>
+                    <td>@v.Estudiante?.NombreCompleto</td>
+                    <td>@Textos.Tipo(v.TipoEvaluacion)</td>
+                    <td>@v.Fecha.ToString("dd/MM/yyyy")</td>
+                    <td class="@(v.Calificacion < 70 ? "text-danger fw-bold" : "")">@v.Calificacion.ToString("0.#")</td>
+                    <td><span class="badge bg-info text-dark">@v.NivelCefrAsignado</span></td>
+                    <td class="text-end">
+                        <button class="btn btn-sm btn-outline-primary" @onclick="() => Editar(v)">Editar</button>
+                        @if (confirmarBorrar == v.IdEvaluacion)
+                        {
+                            <button class="btn btn-sm btn-danger ms-1" @onclick="() => Borrar(v.IdEvaluacion)">¿Seguro? Borrar</button>
+                            <button class="btn btn-sm btn-secondary ms-1" @onclick="() => confirmarBorrar = 0">No</button>
+                        }
+                        else
+                        {
+                            <button class="btn btn-sm btn-outline-danger ms-1" @onclick="() => confirmarBorrar = v.IdEvaluacion">Borrar</button>
+                        }
+                    </td>
+                </tr>
+            }
+        </tbody>
+    </table>
+}
+
+@code {
+    private List<Estudiante> estudiantes = new();
+    private List<Evaluacion>? evaluaciones;
+    private Evaluacion form = new();
+    private string? error;
+    private int filtro = 0;
+    private int confirmarBorrar = 0;
+
+    protected override async Task OnInitializedAsync()
+    {
+        using var db = DbFactory.CreateDbContext();
+        estudiantes = await db.Estudiantes.OrderBy(e => e.NombreCompleto).ToListAsync();
+        await Cargar();
+    }
+
+    private async Task Cargar()
+    {
+        using var db = DbFactory.CreateDbContext();
+        evaluaciones = await db.Evaluaciones.Include(v => v.Estudiante)
+            .OrderBy(v => v.Estudiante!.NombreCompleto).ThenBy(v => v.Fecha).ToListAsync();
+    }
+
+    private void Filtrar(ChangeEventArgs e) =>
+        filtro = int.TryParse(e.Value?.ToString(), out var v) ? v : 0;
+
+    private async Task Guardar()
+    {
+        error = null;
+        if (form.IdEstudiante == 0) { error = "Elige un estudiante."; return; }
+
+        using var db = DbFactory.CreateDbContext();
+        var datos = new Evaluacion
+        {
+            IdEvaluacion = form.IdEvaluacion, IdEstudiante = form.IdEstudiante,
+            TipoEvaluacion = form.TipoEvaluacion, Fecha = form.Fecha,
+            Calificacion = form.Calificacion, NivelCefrAsignado = form.NivelCefrAsignado
+        };
+        if (datos.IdEvaluacion == 0) db.Evaluaciones.Add(datos);
+        else db.Evaluaciones.Update(datos);
+        await db.SaveChangesAsync();
+        Limpiar();
+        await Cargar();
+    }
+
+    private void Editar(Evaluacion v)
+    {
+        error = null;
+        form = new Evaluacion
+        {
+            IdEvaluacion = v.IdEvaluacion, IdEstudiante = v.IdEstudiante,
+            TipoEvaluacion = v.TipoEvaluacion, Fecha = v.Fecha,
+            Calificacion = v.Calificacion, NivelCefrAsignado = v.NivelCefrAsignado
+        };
+    }
+
+    private void Limpiar() { form = new Evaluacion(); error = null; }
+
+    private async Task Borrar(int id)
+    {
+        using var db = DbFactory.CreateDbContext();
+        var v = await db.Evaluaciones.FindAsync(id);
+        if (v is not null) { db.Evaluaciones.Remove(v); await db.SaveChangesAsync(); }
+        confirmarBorrar = 0;
+        if (form.IdEvaluacion == id) Limpiar();
+        await Cargar();
+    }
+}
